@@ -1,0 +1,17 @@
+database:
+  host: 'localhost'
+  port: 3306
+  name: 'whitelist_db'
+  user: 'dbuser'
+  password: 'dbpassword'
+
+discord:
+  token: 'YOUR_DISCORD_BOT_TOKEN'
+  requiredRoleIds:
+    - 'ROLE_ID_1'
+    - 'ROLE_ID_2'
+    - 'ROLE_ID_3'
+
+whitelisted_servers:
+  - 'whitelisted_server1'
+  - 'whitelisted_server2'
