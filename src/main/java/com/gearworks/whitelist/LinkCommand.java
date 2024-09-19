@@ -24,6 +24,6 @@ public class LinkCommand implements SimpleCommand {
         Player player = (Player) source;
         String code = codeManager.generateCode(player.getUniqueId());
         player.sendMessage(Component.text("Use this code to link your Discord account: " + code));
-        player.sendMessage(Component.text("Send this code to the Discord bot via direct message."));
+        player.sendMessage(Component.text("Send this code to the Gearworks Discord bot via direct message."));
     }
 }

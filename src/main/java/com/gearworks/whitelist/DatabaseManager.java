@@ -43,7 +43,8 @@ public class DatabaseManager {
             String sql = "CREATE TABLE IF NOT EXISTS linked_accounts (" +
                     "uuid VARCHAR(36) PRIMARY KEY," +
                     "discord_id VARCHAR(64)," +
-                    "is_whitelisted BOOLEAN DEFAULT FALSE" +
+                    "is_whitelisted BOOLEAN DEFAULT FALSE," +
+                    "username VARCHAR(256)" +
                     ")";
             statement.executeUpdate(sql);
 

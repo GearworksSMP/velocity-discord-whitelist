@@ -3,15 +3,25 @@ package com.gearworks.whitelist;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
 import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
+import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.serialize.SerializationException;
 import org.spongepowered.configurate.yaml.NodeStyle;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import com.velocitypowered.api.command.CommandManager;
 import org.slf4j.Logger;
+import com.velocitypowered.api.proxy.server.RegisteredServer;
+import java.util.Optional;
+import java.util.UUID;
 
 import javax.security.auth.login.LoginException;
 import java.io.IOException;
@@ -23,18 +33,41 @@ import java.util.*;
 @Plugin(id = "whitelist", name = "Gearworks Whitelist", version = "1.0.0", authors = {"uberswe"})
 public class DiscordWhitelistPlugin {
 
-    private final ProxyServer server;
     private final Logger logger;
     private DiscordBot discordBot;
     private DatabaseManager databaseManager;
     private Set<String> whitelistedServers;
     private CodeManager codeManager;
     private List<String> requiredRoleIds;
+    // Map to track streaming mode status per server
+    private final ConcurrentMap<String, Boolean> streamingServers = new ConcurrentHashMap<>();
+
+    // UUID of uberswe
+    private static final UUID CONTENT_CREATOR_UUID = UUID.fromString("eacc6702-0fe8-4ef2-9143-72d34c5c423e");
+
+    @Inject
+    private ProxyServer server; // Ensure you have the ProxyServer injected
+
 
     @Inject
     public DiscordWhitelistPlugin(ProxyServer server, Logger logger) {
         this.server = server;
         this.logger = logger;
+    }
+
+    // Method to toggle streaming mode
+    public void setStreamingMode(String serverName, boolean enabled) {
+        streamingServers.put(serverName, enabled);
+
+        // If streaming mode is being enabled, kick other players from the server
+        if (enabled) {
+            kickNonContentCreatorPlayers(serverName);
+        }
+    }
+
+    // Method to check if a server is in streaming mode
+    public boolean isStreamingMode(String serverName) {
+        return streamingServers.getOrDefault(serverName, false);
     }
 
     private ConfigurationNode loadConfiguration() {
@@ -148,6 +181,10 @@ public class DiscordWhitelistPlugin {
         server.getEventManager().register(this, new PlayerConnectionListener(
                 accountLinkManager, discordBot.getJDA(), requiredRoleIds, whitelistedServers, logger));
 
+        // Register the streamingmode command
+        CommandManager commandManager = server.getCommandManager();
+        commandManager.register("streamingmode", new StreamingModeCommand(this));
+
         logger.info("DiscordWhitelist has been enabled!");
     }
 
@@ -160,5 +197,53 @@ public class DiscordWhitelistPlugin {
             databaseManager.shutdown();
         }
         logger.info("DiscordWhitelist has been disabled!");
+    }
+
+    // Getter for ProxyServer if needed
+    public ProxyServer getProxyServer() {
+        return server;
+    }
+
+    @Subscribe
+    public void onServerPreConnect(ServerPreConnectEvent event) {
+        Player player = event.getPlayer();
+        String serverName = event.getOriginalServer().getServerInfo().getName();
+
+        // Check if the server is in streaming mode
+        if (isStreamingMode(serverName)) {
+            if (player.getUniqueId().equals(CONTENT_CREATOR_UUID)) {
+                // Allow the content creator to connect
+                return;
+            } else {
+                // Deny connection and send message
+                event.setResult(ServerPreConnectEvent.ServerResult.denied());
+                player.sendMessage(Component.text("Server is being used for content creation, please check back later.", NamedTextColor.RED));
+            }
+        }
+    }
+
+    private void kickNonContentCreatorPlayers(String serverName) {
+        // Get the server instance
+        Optional<RegisteredServer> optionalServer = server.getServer(serverName);
+        if (!optionalServer.isPresent()) {
+            logger.warn("Server not found: " + serverName);
+            return;
+        }
+
+        RegisteredServer registeredServer = optionalServer.get();
+
+        // Schedule the task on the main thread
+        server.getScheduler().buildTask(this, () -> {
+            UUID contentCreatorUUID = UUID.fromString("eacc6702-0fe8-4ef2-9143-72d34c5c423e");
+
+            // Iterate over all players connected to the server
+            for (Player player : registeredServer.getPlayersConnected()) {
+                if (!player.getUniqueId().equals(contentCreatorUUID)) {
+                    // Disconnect the player with a custom message
+                    player.disconnect(Component.text("Server is being used for content creation, please check back later.", NamedTextColor.RED));
+                    logger.info("Kicked player " + player.getUsername() + " from server " + serverName + " due to streaming mode activation.");
+                }
+            }
+        }).schedule();
     }
 }

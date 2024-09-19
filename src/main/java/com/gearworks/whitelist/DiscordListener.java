@@ -21,7 +21,7 @@ public class DiscordListener extends ListenerAdapter {
         UUID uuid = codeManager.verifyCode(code);
 
         if (uuid != null) {
-            accountLinkManager.linkAccount(uuid, event.getAuthor().getId());
+            accountLinkManager.linkAccount(uuid, event.getAuthor().getId(), event.getAuthor().getName());
             event.getChannel().sendMessage("Your account has been linked!").queue();
         }
     }

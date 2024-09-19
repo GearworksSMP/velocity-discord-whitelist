@@ -12,8 +12,8 @@ public class AccountLinkManager {
         this.databaseManager = databaseManager;
     }
 
-    public void linkAccount(UUID uuid, String discordId) {
-        String sql = "REPLACE INTO linked_accounts (uuid, discord_id, is_whitelisted) VALUES (?, ?, ?)";
+    public void linkAccount(UUID uuid, String discordId, String username) {
+        String sql = "REPLACE INTO linked_accounts (uuid, discord_id, is_whitelisted, username) VALUES (?, ?, ?, ?)";
 
         try (Connection connection = databaseManager.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -21,6 +21,7 @@ public class AccountLinkManager {
             statement.setString(1, uuid.toString());
             statement.setString(2, discordId);
             statement.setBoolean(3, false); // Not manually whitelisted
+            statement.setString(4, username); // Not manually whitelisted
             statement.executeUpdate();
 
         } catch (SQLException e) {

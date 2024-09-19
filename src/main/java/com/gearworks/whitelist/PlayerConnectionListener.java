@@ -65,7 +65,7 @@ public class PlayerConnectionListener {
 
                         if (!hasRequiredRole) {
                             // Player does not have any of the required roles; kick them
-                            player.disconnect(Component.text("You do not have the required Discord role to join this server."));
+                            player.disconnect(Component.text("You do not have the required Discord role to join this server. You need to be a Patreon member, link your Discord to Patreon to automatically get the role."));
                         }
                         // If the player has any of the roles, do nothing and allow them to connect
 
