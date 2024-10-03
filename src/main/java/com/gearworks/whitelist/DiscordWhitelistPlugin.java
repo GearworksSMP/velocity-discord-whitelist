@@ -2,7 +2,9 @@ package com.gearworks.whitelist;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
+import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.command.CommandExecuteEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
@@ -174,15 +176,21 @@ public class DiscordWhitelistPlugin {
             return;
         }
 
+        CommandManager commandManager = server.getCommandManager();
         // Register the /link command
-        server.getCommandManager().register("link", new LinkCommand(codeManager));
+        commandManager.register("link", new LinkCommand(codeManager));
+
+        // Register the broadcast command
+        CommandMeta meta = commandManager.metaBuilder("broadcast")
+                .aliases("bc")
+                .build();
+        commandManager.register(meta, new BroadcastCommand(server));
 
         // Register event listeners with the updated requiredRoleIds
         server.getEventManager().register(this, new PlayerConnectionListener(
                 accountLinkManager, discordBot.getJDA(), requiredRoleIds, whitelistedServers, logger));
 
         // Register the streamingmode command
-        CommandManager commandManager = server.getCommandManager();
         commandManager.register("streamingmode", new StreamingModeCommand(this));
 
         logger.info("DiscordWhitelist has been enabled!");
@@ -245,5 +253,20 @@ public class DiscordWhitelistPlugin {
                 }
             }
         }).schedule();
+    }
+
+    @Subscribe
+    public void onCommandExecute(CommandExecuteEvent event) {
+        if (event.getCommandSource() instanceof Player) {
+            Player player = (Player) event.getCommandSource();
+            String command = event.getCommand();
+
+            RegisteredServer server = player.getCurrentServer().get().getServer();
+            // Check if the command is the one you want to block typing for
+            if (command.startsWith("/server") && !server.getServerInfo().getName().equals("lobby")) {
+                // Cancel the command to block it from being displayed
+                event.setResult(CommandExecuteEvent.CommandResult.denied());
+            }
+        }
     }
 }
