@@ -19,38 +19,59 @@ public class PlayerConnectionListener {
     private final List<String> requiredRoleIds;
     private final Set<String> whitelistedServers;
     private final Logger logger;
+    private final CodeManager codeManager;
+    private final DiscordWhitelistPlugin plugin;
 
     public PlayerConnectionListener(AccountLinkManager accountLinkManager, JDA jda, List<String> requiredRoleIds,
-                                    Set<String> whitelistedServers, Logger logger) {
+                                    Set<String> whitelistedServers, Logger logger, CodeManager codeManager,
+                                    DiscordWhitelistPlugin plugin) {
         this.accountLinkManager = accountLinkManager;
         this.jda = jda;
         this.requiredRoleIds = requiredRoleIds;
         this.whitelistedServers = whitelistedServers;
         this.logger = logger;
+        this.codeManager = codeManager;
+        this.plugin = plugin;
     }
 
     @Subscribe
     public void onServerConnected(ServerConnectedEvent event) {
         String serverName = event.getServer().getServerInfo().getName();
+        Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+
+        // Cache the last server the player connected to, regardless of whether it's whitelisted
+        plugin.cacheLastServer(uuid, serverName);
+        logger.info("Player " + player.getUsername() + " (" + uuid + ") connected to server " + serverName);
 
         if (!whitelistedServers.contains(serverName)) {
             // The server is public; no need to check for whitelisting
             return;
         }
 
-        Player player = event.getPlayer();
-        UUID uuid = player.getUniqueId();
+        // Check if player is in the cache
+        if (plugin.isPlayerCached(uuid)) {
+            logger.info("Player " + player.getUsername() + " (" + uuid + ") is in the whitelist cache; allowing connection");
+            return;
+        }
 
         accountLinkManager.isWhitelisted(uuid).thenAccept(isWhitelisted -> {
             if (isWhitelisted) {
                 // Player is manually whitelisted; allow them to connect
+                // Add to cache for future connections
+                plugin.cachePlayer(uuid);
                 return;
             }
 
             accountLinkManager.getDiscordId(uuid).thenAccept(discordId -> {
                 if (discordId == null) {
                     // Kick the player for not linking their Discord account
-                    player.disconnect(Component.text("You have not linked your Discord account. Use /link in-game to get started."));
+                    String code = codeManager.generateCode(player.getUniqueId());
+                    player.disconnect(Component.text("Use this code to link your Discord account: " + code + "\n" +
+                            "Send this code in the #bot-commands channel in Uberswe's Discord.\n" +
+                            "Make sure you are a paid Patreon member and that your Patreon account is linked to your Discord\n" +
+                            "Patreon: https://www.patreon.com/c/Uberswe\n" +
+                            "Discord: https://discord.gg/NQJuhb6stv"));
                     return;
                 }
 
@@ -65,9 +86,14 @@ public class PlayerConnectionListener {
 
                         if (!hasRequiredRole) {
                             // Player does not have any of the required roles; kick them
-                            player.disconnect(Component.text("You do not have the required Discord role to join this server. You need to be a Patreon member, link your Discord to Patreon to automatically get the role."));
+                            player.disconnect(Component.text("Make sure you are a paid Patreon member and that your Patreon account is linked to your Discord\n" +
+                                    "Patreon: https://www.patreon.com/c/Uberswe\n" +
+                                    "Discord: https://discord.gg/NQJuhb6stv"));
+                        } else {
+                            // Player has the required role; add to cache for future connections
+                            plugin.cachePlayer(uuid);
+                            logger.info("Player " + player.getUsername() + " (" + uuid + ") has required role; added to whitelist cache");
                         }
-                        // If the player has any of the roles, do nothing and allow them to connect
 
                     }, throwable -> {
                         // Error retrieving member

@@ -44,6 +44,37 @@ public class DiscordWhitelistPlugin {
     // Map to track streaming mode status per server
     private final ConcurrentMap<String, Boolean> streamingServers = new ConcurrentHashMap<>();
 
+    // Cache for whitelisted players (UUID -> timestamp of last successful connection)
+    private final ConcurrentMap<UUID, Long> whitelistedPlayersCache = new ConcurrentHashMap<>();
+
+    // Cache for last connected server (UUID -> server name and timestamp)
+    private final ConcurrentMap<UUID, LastServerInfo> lastServerCache = new ConcurrentHashMap<>();
+
+    // One week in milliseconds
+    private static final long ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000L;
+
+    // One month in milliseconds
+    private static final long ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000L;
+
+    // Class to store server info and timestamp
+    private static class LastServerInfo {
+        private final String serverName;
+        private final long timestamp;
+
+        public LastServerInfo(String serverName) {
+            this.serverName = serverName;
+            this.timestamp = System.currentTimeMillis();
+        }
+
+        public String getServerName() {
+            return serverName;
+        }
+
+        public long getTimestamp() {
+            return timestamp;
+        }
+    }
+
     // UUID of uberswe
     private static final UUID CONTENT_CREATOR_UUID = UUID.fromString("eacc6702-0fe8-4ef2-9143-72d34c5c423e");
 
@@ -188,7 +219,7 @@ public class DiscordWhitelistPlugin {
 
         // Register event listeners with the updated requiredRoleIds
         server.getEventManager().register(this, new PlayerConnectionListener(
-                accountLinkManager, discordBot.getJDA(), requiredRoleIds, whitelistedServers, logger));
+                accountLinkManager, discordBot.getJDA(), requiredRoleIds, whitelistedServers, logger, codeManager, this));
 
         // Register the streamingmode command
         commandManager.register("streamingmode", new StreamingModeCommand(this));
@@ -212,20 +243,113 @@ public class DiscordWhitelistPlugin {
         return server;
     }
 
+    /**
+     * Checks if a player is in the whitelist cache and the cache entry is still valid (less than 1 week old)
+     * @param uuid The UUID of the player to check
+     * @return true if the player is in the cache and the entry is still valid, false otherwise
+     */
+    public boolean isPlayerCached(UUID uuid) {
+        Long timestamp = whitelistedPlayersCache.get(uuid);
+        if (timestamp == null) {
+            return false;
+        }
+
+        // Check if the cache entry is less than 1 week old
+        long currentTime = System.currentTimeMillis();
+        return (currentTime - timestamp) < ONE_WEEK_MS;
+    }
+
+    /**
+     * Adds a player to the whitelist cache with the current timestamp
+     * @param uuid The UUID of the player to add to the cache
+     */
+    public void cachePlayer(UUID uuid) {
+        whitelistedPlayersCache.put(uuid, System.currentTimeMillis());
+        logger.info("Player " + uuid + " added to whitelist cache");
+    }
+
+    /**
+     * Stores the last server a player connected to
+     * @param uuid The UUID of the player
+     * @param serverName The name of the server
+     */
+    public void cacheLastServer(UUID uuid, String serverName) {
+        lastServerCache.put(uuid, new LastServerInfo(serverName));
+        logger.info("Cached last server " + serverName + " for player " + uuid);
+    }
+
+    /**
+     * Checks if a player has a cached last server and if the cache entry is still valid (less than 1 month old)
+     * @param uuid The UUID of the player to check
+     * @return true if the player has a valid cached last server, false otherwise
+     */
+    public boolean hasValidLastServer(UUID uuid) {
+        LastServerInfo info = lastServerCache.get(uuid);
+        if (info == null) {
+            return false;
+        }
+
+        // Check if the cache entry is less than 1 month old
+        long currentTime = System.currentTimeMillis();
+        return (currentTime - info.getTimestamp()) < ONE_MONTH_MS;
+    }
+
+    /**
+     * Gets the name of the last server a player connected to
+     * @param uuid The UUID of the player
+     * @return The name of the last server, or null if not found or expired
+     */
+    public String getLastServerName(UUID uuid) {
+        if (!hasValidLastServer(uuid)) {
+            return null;
+        }
+        return lastServerCache.get(uuid).getServerName();
+    }
+
     @Subscribe
     public void onServerPreConnect(ServerPreConnectEvent event) {
         Player player = event.getPlayer();
+        UUID playerUuid = player.getUniqueId();
         String serverName = event.getOriginalServer().getServerInfo().getName();
 
         // Check if the server is in streaming mode
         if (isStreamingMode(serverName)) {
-            if (player.getUniqueId().equals(CONTENT_CREATOR_UUID)) {
+            if (playerUuid.equals(CONTENT_CREATOR_UUID)) {
                 // Allow the content creator to connect
                 return;
             } else {
                 // Deny connection and send message
                 event.setResult(ServerPreConnectEvent.ServerResult.denied());
                 player.sendMessage(Component.text("Server is being used for content creation, please check back later.", NamedTextColor.RED));
+                return;
+            }
+        }
+
+        // Only redirect if the player is first joining the proxy (doesn't have a current server yet)
+        // This prevents redirection when using /server commands
+        if (!player.getCurrentServer().isPresent() && this.hasValidLastServer(playerUuid)) {
+            String lastServer = this.getLastServerName(playerUuid);
+
+            // Don't redirect if player is explicitly trying to connect to a specific server
+            // or if they're already connecting to their last server
+            if (!serverName.equals(lastServer)) {
+                // Get the server instance for the last connected server
+                Optional<RegisteredServer> targetServer = server.getServer(lastServer);
+
+                if (targetServer.isPresent()) {
+                    // Check if the target server is in streaming mode
+                    if (isStreamingMode(lastServer) && !playerUuid.equals(CONTENT_CREATOR_UUID)) {
+                        // Don't redirect to a streaming server if player is not the content creator
+                        logger.info("Not redirecting player " + player.getUsername() + " to " + lastServer + " because it's in streaming mode");
+                        return;
+                    }
+
+                    // Redirect the player to their last connected server
+                    event.setResult(ServerPreConnectEvent.ServerResult.allowed(targetServer.get()));
+                    logger.info("Redirecting player " + player.getUsername() + " to their last server: " + lastServer);
+                } else {
+                    logger.warn("Last server " + lastServer + " for player " + player.getUsername() + " not found");
+                }
             }
         }
     }
